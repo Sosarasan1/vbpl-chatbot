@@ -8,9 +8,9 @@ from tqdm import tqdm
 import threading
 
 # --- PHẦN 1: CẤU HÌNH ---
-INPUT_FILE = "../data/vbpl_tat_ca_links.json"
-OUTPUT_FILE = "../data/vbpl_data_hoan_chinh.jsonl"
-ERROR_LOG_FILE = "../data/error_log.txt"  # File để ghi lại các link lỗi
+INPUT_FILE = "vbpl_tat_ca_links.json"
+OUTPUT_FILE = "vbpl_data_hoan_chinh.jsonl"
+ERROR_LOG_FILE = "error_log.txt" # File để ghi lại các link lỗi
 MAX_WORKERS = 8
 
 # --- PHẦN 2: HÀM XỬ LÝ LÕI ---
@@ -49,19 +49,19 @@ def scrape_document_details(doc_info):
         for attempt in range(3):
             try:
                 response_attr = session.get(attribute_url, timeout=15)
+                # Xử lý lỗi 404 và các lỗi client khác - không cần thử lại
                 if 400 <= response_attr.status_code < 500:
                     log_error(attribute_url, f"Client Error {response_attr.status_code}. Không thử lại.")
                     return None
                 if response_attr.status_code == 200:
-                    break
+                    break # Thành công
             except requests.exceptions.RequestException as e:
-                if attempt == 2:
+                if attempt == 2: # Nếu là lần thử cuối cùng
                     log_error(attribute_url, f"Lỗi mạng sau 3 lần thử: {e}")
                     return None
                 time.sleep(2)
         
-        if not response_attr:
-            return None
+        if not response_attr: return None
 
         response_attr.encoding = 'utf-8'
         soup_attr = BeautifulSoup(response_attr.text, 'html.parser')
@@ -72,19 +72,17 @@ def scrape_document_details(doc_info):
         ]
         attribute_table = soup_attr.select_one("div.vbProperties table")
         if attribute_table:
+            # ... (logic cào thuộc tính giữ nguyên) ...
             for row in attribute_table.find_all('tr'):
                 columns = row.find_all('td')
                 if len(columns) >= 2:
                     label1 = columns[0].text.strip().replace(':', '')
-                    if label1 in important_attributes:
-                        doc_attributes[label1] = columns[1].text.strip()
+                    if label1 in important_attributes: doc_attributes[label1] = columns[1].text.strip()
                     if len(columns) >= 4:
                         label2 = columns[2].text.strip().replace(':', '')
-                        if label2 in important_attributes:
-                            doc_attributes[label2] = columns[3].text.strip()
+                        if label2 in important_attributes: doc_attributes[label2] = columns[3].text.strip()
             status_element = soup_attr.select_one(".vbStatus")
-            if status_element:
-                doc_attributes["Tình trạng hiệu lực"] = status_element.text.strip().replace('Tình trạng hiệu lực:', '').strip()
+            if status_element: doc_attributes["Tình trạng hiệu lực"] = status_element.text.strip().replace('Tình trạng hiệu lực:', '').strip()
         
         # --- Lấy nội dung ---
         response_content = None
@@ -102,8 +100,7 @@ def scrape_document_details(doc_info):
                     return None
                 time.sleep(2)
 
-        if not response_content:
-            return None
+        if not response_content: return None
 
         response_content.encoding = 'utf-8'
         soup_content = BeautifulSoup(response_content.text, 'html.parser')
@@ -112,7 +109,8 @@ def scrape_document_details(doc_info):
             doc_content = content_area.get_text(separator='\n', strip=True)
         else:
             log_error(content_url, "Không tìm thấy div#toanvancontent.")
-
+            # Vẫn trả về dữ liệu thuộc tính dù không có nội dung
+        
         return {
             'tieu_de': doc_info['title'],
             'url_goc': content_url,
@@ -129,41 +127,36 @@ def scrape_document_details(doc_info):
 if __name__ == "__main__":
     print("--- BẮT ĐẦU GIAI ĐOẠN 2 (BỀN BỈ) ---")
     
+    # ... (phần code đọc file và tính toán remaining_links không đổi) ...
     try:
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            all_links_to_process = json.load(f)
-    except FileNotFoundError:
-        print(f"Lỗi: Không tìm thấy file '{INPUT_FILE}'.")
-        exit()
-
+        with open(INPUT_FILE, 'r', encoding='utf-8') as f: all_links_to_process = json.load(f)
+    except FileNotFoundError: print(f"Lỗi: Không tìm thấy file '{INPUT_FILE}'."); exit()
     scraped_urls = set()
     try:
         with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
-            for line in f:
-                scraped_urls.add(json.loads(line)['url_goc'])
-    except FileNotFoundError:
-        print("Không tìm thấy file output, sẽ bắt đầu tạo file mới.")
-
+            for line in f: scraped_urls.add(json.loads(line)['url_goc'])
+    except FileNotFoundError: print("Không tìm thấy file output, sẽ bắt đầu tạo file mới.")
     remaining_links = [link for link in all_links_to_process if link['url'] not in scraped_urls]
     print(f"Tổng số link cần xử lý: {len(all_links_to_process)}")
     print(f"Số link đã xử lý: {len(scraped_urls)}")
     print(f"Số link còn lại cần cào: {len(remaining_links)}")
-
-    if not remaining_links:
-        print("Tất cả các link đã được xử lý. Hoàn thành!")
-        exit()
+    if not remaining_links: print("Tất cả các link đã được xử lý. Hoàn thành!"); exit()
     
     error_count = 0
 
     with open(OUTPUT_FILE, 'a', encoding='utf-8') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            
             progress_bar = tqdm(executor.map(scrape_document_details, remaining_links), total=len(remaining_links), desc="Đang cào dữ liệu")
             
             for result in progress_bar:
                 if result:
                     f.write(json.dumps(result, ensure_ascii=False) + '\n')
                 else:
+                    # Nếu hàm xử lý trả về None, đó là một lỗi
                     error_count += 1
+                
+                # Cập nhật thông tin lỗi lên thanh tiến trình
                 progress_bar.set_postfix(errors=error_count)
 
     print(f"\n--- HOÀN THÀNH! ---")

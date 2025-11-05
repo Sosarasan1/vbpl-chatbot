@@ -16,6 +16,7 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 LLM_MODEL = "llama3.2:3b"
 TOP_K = 10
 CONTEXT_TOKEN_LIMIT = 2500
+SIM_THRESHOLD = 0.35   # 🔹 Ngưỡng tương đồng tối thiểu
 
 # ===== LOAD MODEL =====
 print("🔹 Đang load model embedding...")
@@ -87,7 +88,7 @@ while True:
         results = collection.query(
             query_embeddings=[q_emb.tolist()],
             n_results=TOP_K * 2,
-            where_document=where_filter,  # pyright: ignore[reportArgumentType]
+            where_document=where_filter,
             include=["documents", "metadatas"]
         )
     else:
@@ -108,6 +109,19 @@ while True:
     doc_embs = embed_model.encode([tokenize(d) for d in docs_raw], convert_to_numpy=True)
     docs_struct = [{"text": d, "meta": m} for d, m in zip(docs_raw, metas_raw)]
     top_docs = rerank_cosine(q_emb, doc_embs, docs_struct, top_k=5)
+
+    # 🔹 Kiểm tra ngưỡng tương đồng
+    avg_sim = np.mean([d["score"] for d in top_docs])
+    if avg_sim < SIM_THRESHOLD:
+        print("🤔 Câu hỏi này có vẻ không thuộc phạm vi pháp luật Việt Nam.\n"
+              "Tôi chỉ cung cấp thông tin dựa trên các văn bản pháp luật được lưu trữ trong cơ sở dữ liệu.\n")
+        continue
+
+    # Lọc chỉ giữ đoạn liên quan
+    top_docs = [d for d in top_docs if d["score"] >= SIM_THRESHOLD]
+    if not top_docs:
+        print("⚠️ Không có đoạn nào đủ liên quan để trả lời.\n")
+        continue
 
     print("\n Top 3 đoạn được chọn (sau rerank):")
     for i, d in enumerate(top_docs[:3], 1):
@@ -136,12 +150,10 @@ Hãy trả lời hoàn toàn bằng **tiếng Việt chuẩn pháp lý**, rõ r�
 Dựa vào NGỮ CẢNH ở trên để **trích dẫn hoặc tóm tắt nội dung liên quan nhất** đến câu hỏi.
 
 Yêu cầu:
-- Tuyệt đối **không sử dụng tiếng nước ngoài** (đặc biệt là tiếng Trung hoặc tiếng Anh).
-- Giữ giọng văn nghiêm túc, trung lập, và thể hiện đúng phong cách hành chính - pháp lý.
-- **Trích dẫn rõ ràng** tên văn bản, điều luật hoặc chương/mục nếu có trong NGỮ CẢNH.
-- Nếu NGỮ CẢNH chỉ cung cấp một phần thông tin, hãy diễn giải hợp lý dựa trên nội dung đó, không thêm ý kiến cá nhân.
-- Nếu hoàn toàn **không có thông tin liên quan**, chỉ khi đó mới trả lời:
-  "Tôi không tìm thấy thông tin trong các văn bản được cung cấp."
+- Nếu không có thông tin liên quan, hãy trả lời:
+  "Câu hỏi này không nằm trong phạm vi văn bản pháp luật Việt Nam."
+- Không bịa đặt hoặc suy luận ngoài nội dung NGỮ CẢNH.
+- Giữ giọng văn hành chính, pháp lý, trung lập.
 ---
 """
 
